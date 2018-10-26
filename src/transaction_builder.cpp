@@ -21,6 +21,31 @@ SpendDescriptionInfo::SpendDescriptionInfo(
     librustzcash_sapling_generate_r(alpha.begin());
 }
 
+TransactionBuilderResult::TransactionBuilderResult(const CTransaction& tx) : maybeTx(tx) {}
+
+TransactionBuilderResult::TransactionBuilderResult(const std::string& error) : maybeError(error) {}
+
+bool TransactionBuilderResult::isTx() { return maybeTx != boost::none; }
+
+bool TransactionBuilderResult::isError() { return maybeError != boost::none; }
+
+CTransaction TransactionBuilderResult::getTxOrThrow() {
+    if (maybeTx) {
+        return maybeTx.get();
+    } else {
+        throw std::runtime_error(getError());
+    }
+}
+
+std::string TransactionBuilderResult::getError() {
+    if (maybeError) {
+        return maybeError.get();
+    } else {
+        // This can only happen if isTx() is true in which case we should not call getError()
+        return "Unknown Error";
+    }
+}
+
 TransactionBuilder::TransactionBuilder(
     const Consensus::Params& consensusParams,
     int nHeight,
@@ -155,7 +180,7 @@ bool TransactionBuilder::SendChangeTo(CTxDestination& changeAddr)
     return true;
 }
 
-boost::optional<CTransaction> TransactionBuilder::Build()
+TransactionBuilderResult TransactionBuilder::Build()
 {
     //
     // Consistency checks
@@ -176,7 +201,7 @@ boost::optional<CTransaction> TransactionBuilder::Build()
         change -= tOut.nValue;
     }
     if (change < 0) {
-        return boost::none;
+        return TransactionBuilderResult("Change cannot be negative");
     }
 
     //
@@ -203,7 +228,7 @@ boost::optional<CTransaction> TransactionBuilder::Build()
             auto changeAddr = jsInputs[0].key.address();
             AddSproutOutput(changeAddr, change);
         } else {
-            return boost::none;
+            return TransactionBuilderResult("Could not determine change address");
         }
     }
 
@@ -220,7 +245,7 @@ boost::optional<CTransaction> TransactionBuilder::Build()
             spend.expsk.full_viewing_key(), spend.witness.position());
         if (!(cm && nf)) {
             librustzcash_sapling_proving_ctx_free(ctx);
-            return boost::none;
+            return TransactionBuilderResult("Missing spend commitment or nullifier");
         }
 
         CDataStream ss(SER_NETWORK, PROTOCOL_VERSION);
@@ -242,7 +267,7 @@ boost::optional<CTransaction> TransactionBuilder::Build()
                 sdesc.rk.begin(),
                 sdesc.zkproof.data())) {
             librustzcash_sapling_proving_ctx_free(ctx);
-            return boost::none;
+            return TransactionBuilderResult("Spend proof failed");
         }
 
         sdesc.anchor = spend.anchor;
@@ -255,7 +280,7 @@ boost::optional<CTransaction> TransactionBuilder::Build()
         auto cm = output.note.cm();
         if (!cm) {
             librustzcash_sapling_proving_ctx_free(ctx);
-            return boost::none;
+            return TransactionBuilderResult("Missing output commitment");
         }
 
         libzcash::SaplingNotePlaintext notePlaintext(output.note, output.memo);
@@ -263,7 +288,7 @@ boost::optional<CTransaction> TransactionBuilder::Build()
         auto res = notePlaintext.encrypt(output.note.pk_d);
         if (!res) {
             librustzcash_sapling_proving_ctx_free(ctx);
-            return boost::none;
+            return TransactionBuilderResult("Failed to encrypt note");
         }
         auto enc = res.get();
         auto encryptor = enc.second;
@@ -279,7 +304,7 @@ boost::optional<CTransaction> TransactionBuilder::Build()
                 odesc.cv.begin(),
                 odesc.zkproof.begin())) {
             librustzcash_sapling_proving_ctx_free(ctx);
-            return boost::none;
+            return TransactionBuilderResult("Output proof failed");
         }
 
         odesc.cm = *cm;
@@ -306,7 +331,7 @@ boost::optional<CTransaction> TransactionBuilder::Build()
     if (!jsInputs.empty() || !jsOutputs.empty()) {
         if (!CreateJSDescriptions()) {
             librustzcash_sapling_proving_ctx_free(ctx);
-            return boost::none;
+            return TransactionBuilderResult("Could not create joinsplit description");
         }
     }
 
@@ -323,7 +348,7 @@ boost::optional<CTransaction> TransactionBuilder::Build()
         dataToBeSigned = SignatureHash(scriptCode, mtx, NOT_AN_INPUT, SIGHASH_ALL, 0, consensusBranchId);
     } catch (std::logic_error ex) {
         librustzcash_sapling_proving_ctx_free(ctx);
-        return boost::none;
+        return TransactionBuilderResult("Could not construct signature hash");
     }
 
     // Create Sapling spendAuth and binding signatures
@@ -348,7 +373,7 @@ boost::optional<CTransaction> TransactionBuilder::Build()
         dataToBeSigned.begin(), 32,
         joinSplitPrivKey) != 0)
     {
-        return boost::none;
+        return TransactionBuilderResult("Could not create joinsplit signature");
     }
 
     // Sanity check Sprout joinSplitSig
@@ -357,7 +382,7 @@ boost::optional<CTransaction> TransactionBuilder::Build()
         dataToBeSigned.begin(), 32,
         mtx.joinSplitPubKey.begin()) != 0)
     {
-        return boost::none;
+        return TransactionBuilderResult("Could not verify joinsplit signature");
     }
 
     // Transparent signatures
@@ -371,13 +396,13 @@ boost::optional<CTransaction> TransactionBuilder::Build()
             tIn.scriptPubKey, sigdata, consensusBranchId);
 
         if (!signSuccess) {
-            return boost::none;
+            return TransactionBuilderResult("Failed to sign transction");
         } else {
             UpdateTransaction(mtx, nIn, sigdata);
         }
     }
 
-    return CTransaction(mtx);
+    return TransactionBuilderResult(CTransaction(mtx));
 }
 
 bool TransactionBuilder::CreateJSDescriptions()

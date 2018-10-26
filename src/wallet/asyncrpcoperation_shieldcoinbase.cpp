@@ -274,11 +274,11 @@ bool ShieldToAddress::operator()(const libzcash::SaplingPaymentAddress &zaddr) c
     m_op->builder_.SendChangeTo(zaddr, ovk);
 
     // Build the transaction
-    auto maybe_tx = m_op->builder_.Build();
-    if (!maybe_tx) {
-        throw JSONRPCError(RPC_WALLET_ERROR, "Failed to build transaction.");
+    auto buildResult = m_op->builder_.Build();
+    if (buildResult.isError()) {
+        throw JSONRPCError(RPC_WALLET_ERROR, "Failed to build transaction: " + buildResult.getError());
     }
-    m_op->tx_ = maybe_tx.get();
+    m_op->tx_ = buildResult.getTxOrThrow();
 
     // Send the transaction
     // TODO: Use CWallet::CommitTransaction instead of sendrawtransaction

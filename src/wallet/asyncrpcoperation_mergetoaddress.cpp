@@ -368,11 +368,11 @@ bool AsyncRPCOperation_mergetoaddress::main_impl()
 
 
         // Build the transaction
-        auto maybe_tx = builder_.Build();
-        if (!maybe_tx) {
-            throw JSONRPCError(RPC_WALLET_ERROR, "Failed to build transaction.");
+        auto buildResult = builder_.Build();
+        if (buildResult.isError()) {
+            throw JSONRPCError(RPC_WALLET_ERROR, "Failed to build transaction: " + buildResult.getError());
         }
-        tx_ = maybe_tx.get();
+        tx_ = buildResult.getTxOrThrow();
 
         // Send the transaction
         // TODO: Use CWallet::CommitTransaction instead of sendrawtransaction

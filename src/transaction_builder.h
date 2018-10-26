@@ -54,6 +54,21 @@ struct TransparentInputInfo {
         CAmount value) : scriptPubKey(scriptPubKey), value(value) {}
 };
 
+class TransactionBuilderResult {
+private:
+    boost::optional<CTransaction> maybeTx;
+    boost::optional<std::string> maybeError;
+public:
+    TransactionBuilderResult() = delete;
+    TransactionBuilderResult(const CTransaction& tx);
+    TransactionBuilderResult(const std::string& error);
+    // Always use isTx() or isError() before calling getTxOrThrow() or getError()
+    bool isTx();
+    bool isError();
+    CTransaction getTxOrThrow();
+    std::string getError();
+};
+
 class TransactionBuilder
 {
 private:
@@ -125,7 +140,7 @@ public:
 
     bool SendChangeTo(CTxDestination& changeAddr);
 
-    boost::optional<CTransaction> Build();
+    TransactionBuilderResult Build();
 
 private:
     bool CreateJSDescriptions();
